@@ -1,0 +1,20 @@
+{
+  "name": "スケジュール帳",
+  "short_name": "スケジュール",
+  "description": "睡眠・移動・食事など1日の全行動を時系列で管理するスケジュール帳",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#121212",
+  "theme_color": "#121212",
+  "lang": "ja",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
