@@ -100,6 +100,40 @@ button{
 .legend-item{display:flex;align-items:center;gap:5px;white-space:nowrap;}
 .legend-dot{width:9px;height:9px;border-radius:50%;flex:none;}
 
+.favorites-bar{
+  flex:none;
+  display:flex;
+  gap:8px;
+  overflow-x:auto;
+  padding:8px 14px;
+  background:var(--bg-elevated);
+  border-bottom:1px solid var(--border);
+}
+.favorite-chip{
+  flex:none;
+  display:flex;
+  align-items:center;
+  gap:6px;
+  white-space:nowrap;
+  background:var(--bg-card);
+  border:1px solid var(--border);
+  border-left:4px solid var(--cat-other);
+  border-radius:20px;
+  padding:7px 8px 7px 12px;
+  font-size:13px;
+  color:var(--text);
+}
+.favorite-chip[data-category="睡眠"]{border-left-color:var(--cat-sleep);}
+.favorite-chip[data-category="移動"]{border-left-color:var(--cat-move);}
+.favorite-chip[data-category="食事"]{border-left-color:var(--cat-meal);}
+.favorite-chip[data-category="その他"]{border-left-color:var(--cat-other);}
+.fav-remove{
+  color:var(--text-secondary);
+  font-size:14px;
+  line-height:1;
+  padding:2px 4px;
+}
+
 /* ---------- timeline ---------- */
 .timeline-scroll{
   flex:1;
@@ -219,6 +253,8 @@ button{
 }
 .modal-overlay.open .modal-card{transform:translateY(0);}
 .modal-card h2{margin:0 0 14px;font-size:18px;}
+.modal-header-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;}
+.modal-header-row h2{margin:0;}
 .modal-handle{
   width:36px;height:4px;border-radius:2px;background:var(--border);
   margin:0 auto 14px;
@@ -321,6 +357,8 @@ button{
   <div class="legend-item"><span class="legend-dot" style="background:var(--cat-other)"></span>その他</div>
 </div>
 
+<div class="favorites-bar hidden" id="favoritesBar"></div>
+
 <main class="timeline-scroll" id="timelineScroll">
   <div class="timeline-inner" id="timelineInner">
     <div class="events-layer" id="eventsLayer"></div>
@@ -352,7 +390,10 @@ button{
 <div class="modal-overlay" id="eventModal">
   <div class="modal-card">
     <div class="modal-handle"></div>
-    <h2 id="eventModalTitle">予定を追加</h2>
+    <div class="modal-header-row">
+      <h2 id="eventModalTitle">予定を追加</h2>
+      <button type="button" class="icon-btn" id="btnPinFavorite" aria-label="よく使う予定に登録" title="よく使う予定に登録">☆</button>
+    </div>
     <form id="eventForm">
       <div class="field">
         <label>タイトル</label>
@@ -400,6 +441,7 @@ button{
     <div class="modal-handle"></div>
     <h2>メニュー</h2>
     <div class="menu-list">
+      <button id="btnBulkAdd">🗓 複数日に一括登録</button>
       <button id="btnExport">📤 データをエクスポート</button>
       <button id="btnImportTrigger">📥 データをインポート（JSONファイル）</button>
       <button id="btnCalendarImport">📅 カレンダーインポート（貼り付け）</button>
@@ -427,6 +469,51 @@ button{
   </div>
 </div>
 
+<!-- 複数日に一括登録 -->
+<div class="modal-overlay" id="bulkModal">
+  <div class="modal-card">
+    <div class="modal-handle"></div>
+    <h2>複数日に一括登録</h2>
+    <div class="field">
+      <label>タイトル</label>
+      <input type="text" id="bTitle" required placeholder="例: ジム">
+    </div>
+    <div class="field">
+      <label>カテゴリ</label>
+      <div class="category-chips" id="bulkCategoryChips">
+        <button type="button" class="chip" data-cat="睡眠">💤 睡眠</button>
+        <button type="button" class="chip" data-cat="移動">🚃 移動</button>
+        <button type="button" class="chip" data-cat="食事">🍴 食事</button>
+        <button type="button" class="chip" data-cat="その他">📌 その他</button>
+      </div>
+    </div>
+    <div class="field">
+      <label>時間</label>
+      <div class="datetime-row">
+        <input type="time" id="bStartTime" required>
+        <span style="align-self:center;color:var(--text-secondary)">〜</span>
+        <input type="time" id="bEndTime" required>
+      </div>
+    </div>
+    <div class="field">
+      <label>登録する日付を選択（<span id="bulkSelectedCount">0</span>日選択中）</label>
+      <div class="month-nav">
+        <button type="button" class="icon-btn" id="btnBulkPrevMonth">‹</button>
+        <span class="label" id="bulkMonthLabel"></span>
+        <button type="button" class="icon-btn" id="btnBulkNextMonth">›</button>
+      </div>
+      <div class="weekday-row">
+        <div>日</div><div>月</div><div>火</div><div>水</div><div>木</div><div>金</div><div>土</div>
+      </div>
+      <div class="day-grid" id="bulkDayGrid"></div>
+    </div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-secondary" id="btnCancelBulk">キャンセル</button>
+      <button type="button" class="btn btn-primary" id="btnDoBulk">選択した日に登録</button>
+    </div>
+  </div>
+</div>
+
 <input type="file" id="fileImportInput" accept="application/json,.json" class="hidden">
 
 <script>
@@ -434,16 +521,21 @@ button{
 
 /* ===================== 定数 ===================== */
 const STORAGE_KEY = 'schedule-pwa-data-v1';
+const FAVORITES_STORAGE_KEY = 'schedule-pwa-favorites-v1';
 const CATEGORIES = ['睡眠','移動','食事','その他'];
 const WEEKDAYS_JP = ['日','月','火','水','木','金','土'];
 const HOUR_HEIGHT = 60; // px per hour = 1px per minute
 
 /* ===================== 状態 ===================== */
 let events = [];
+let favorites = [];
 let viewDate = '';
 let monthCursor = { year: 0, month: 0 };
 let editingEventId = null;
 let selectedCategory = 'その他';
+let bulkCategory = 'その他';
+let bulkSelectedDates = new Set();
+let bulkMonthCursor = { year: 0, month: 0 };
 
 /* ===================== 要素参照 ===================== */
 const el = (id) => document.getElementById(id);
@@ -502,10 +594,25 @@ function saveEvents(){
   localStorage.setItem(STORAGE_KEY, JSON.stringify({ events }));
 }
 
+function loadFavorites(){
+  try {
+    const raw = localStorage.getItem(FAVORITES_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed.favorites) ? parsed.favorites : [];
+  } catch (e) {
+    console.warn('お気に入りの読み込みに失敗しました', e);
+    return [];
+  }
+}
+function saveFavorites(){
+  localStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify({ favorites }));
+}
+
 /* ===================== モーダル共通 ===================== */
 function openModal(id){ el(id).classList.add('open'); }
 function closeModal(id){ el(id).classList.remove('open'); }
-['monthModal','eventModal','menuModal','importModal'].forEach((id) => {
+['monthModal','eventModal','menuModal','importModal','bulkModal'].forEach((id) => {
   el(id).addEventListener('click', (e) => { if (e.target.id === id) closeModal(id); });
 });
 
@@ -699,6 +806,74 @@ el('btnDeleteEvent').addEventListener('click', () => {
 });
 el('btnCancelEvent').addEventListener('click', () => closeModal('eventModal'));
 
+el('btnPinFavorite').addEventListener('click', () => {
+  const title = el('fTitle').value.trim();
+  const startTime = el('fStartTime').value;
+  const endTime = el('fEndTime').value;
+  if (!title) { alert('タイトルを入力してください。'); return; }
+  if (!startTime || !endTime) { alert('開始時間と終了時間を入力してください。'); return; }
+  const category = selectedCategory;
+  const note = el('fNote').value.trim();
+  const exists = favorites.some((f) => f.title === title && f.category === category && f.startTime === startTime && f.endTime === endTime);
+  if (exists) { alert('すでによく使う予定に登録されています。'); return; }
+  favorites.push({ id: uuid(), title, category, startTime, endTime, note });
+  saveFavorites();
+  renderFavoritesBar();
+  alert('よく使う予定に登録しました。');
+});
+
+/* ===================== よく使う予定 ===================== */
+function renderFavoritesBar(){
+  const bar = el('favoritesBar');
+  if (favorites.length === 0) {
+    bar.classList.add('hidden');
+    bar.innerHTML = '';
+    return;
+  }
+  bar.classList.remove('hidden');
+  bar.innerHTML = favorites.map((f) => `
+    <span class="favorite-chip" data-category="${escapeAttr(f.category)}" data-id="${f.id}">
+      <span class="fav-label">★ ${escapeHtml(f.title)} ${f.startTime}-${f.endTime}</span>
+      <span class="fav-remove" data-remove-id="${f.id}">✕</span>
+    </span>
+  `).join('');
+  bar.querySelectorAll('.favorite-chip').forEach((chip) => {
+    chip.addEventListener('click', (e) => {
+      const removeBtn = e.target.closest('[data-remove-id]');
+      if (removeBtn) {
+        removeFavorite(removeBtn.dataset.removeId);
+        return;
+      }
+      addEventFromFavorite(chip.dataset.id);
+    });
+  });
+}
+
+function addEventFromFavorite(id){
+  const fav = favorites.find((f) => f.id === id);
+  if (!fav) return;
+  const crossesMidnight = fav.endTime <= fav.startTime;
+  events.push({
+    id: uuid(),
+    title: fav.title,
+    category: fav.category,
+    startDate: viewDate,
+    startTime: fav.startTime,
+    endDate: crossesMidnight ? addDaysStr(viewDate, 1) : viewDate,
+    endTime: fav.endTime,
+    note: fav.note || '',
+  });
+  saveEvents();
+  renderTimeline();
+}
+
+function removeFavorite(id){
+  if (!confirm('よく使う予定から削除しますか？')) return;
+  favorites = favorites.filter((f) => f.id !== id);
+  saveFavorites();
+  renderFavoritesBar();
+}
+
 /* ===================== 月カレンダー ===================== */
 function openMonthModal(){
   const [y, m] = viewDate.split('-').map(Number);
@@ -706,14 +881,11 @@ function openMonthModal(){
   renderMonthGrid();
   openModal('monthModal');
 }
-function renderMonthGrid(){
-  const { year, month } = monthCursor;
-  el('monthLabel').textContent = `${year}年${month + 1}月`;
+function getMonthCells(year, month){
   const firstDay = new Date(year, month, 1);
   const startWeekday = firstDay.getDay();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const daysInPrevMonth = new Date(year, month, 0).getDate();
-  const today = todayStr();
 
   const cells = [];
   for (let i = startWeekday - 1; i >= 0; i--) {
@@ -728,6 +900,14 @@ function renderMonthGrid(){
     cells.push({ y: nd.getFullYear(), m: nd.getMonth(), d: nd.getDate(), outside: true });
     if (cells.length >= 42) break;
   }
+  return cells;
+}
+
+function renderMonthGrid(){
+  const { year, month } = monthCursor;
+  el('monthLabel').textContent = `${year}年${month + 1}月`;
+  const cells = getMonthCells(year, month);
+  const today = todayStr();
 
   let html = '';
   for (const c of cells) {
@@ -762,6 +942,100 @@ el('btnNextMonth').addEventListener('click', () => {
   renderMonthGrid();
 });
 el('btnCloseMonth').addEventListener('click', () => closeModal('monthModal'));
+
+/* ===================== 複数日に一括登録 ===================== */
+function setBulkCategory(cat){
+  bulkCategory = cat;
+  document.querySelectorAll('#bulkCategoryChips .chip').forEach((chip) => {
+    chip.classList.toggle('active', chip.dataset.cat === cat);
+  });
+}
+document.querySelectorAll('#bulkCategoryChips .chip').forEach((chip) => {
+  chip.addEventListener('click', () => setBulkCategory(chip.dataset.cat));
+});
+
+function updateBulkSelectedCount(){
+  el('bulkSelectedCount').textContent = String(bulkSelectedDates.size);
+}
+
+function renderBulkGrid(){
+  const { year, month } = bulkMonthCursor;
+  el('bulkMonthLabel').textContent = `${year}年${month + 1}月`;
+  const cells = getMonthCells(year, month);
+  const today = todayStr();
+
+  let html = '';
+  for (const c of cells) {
+    const dateStr = `${c.y}-${pad(c.m + 1)}-${pad(c.d)}`;
+    const hasEvents = events.some((ev) => ev.startDate <= dateStr && dateStr <= ev.endDate);
+    const classes = ['day-cell'];
+    if (c.outside) classes.push('outside');
+    if (dateStr === today) classes.push('today');
+    if (bulkSelectedDates.has(dateStr)) classes.push('selected');
+    html += `<button type="button" class="${classes.join(' ')}" data-date="${dateStr}">
+      <span>${c.d}</span>${hasEvents ? '<span class="day-dot"></span>' : ''}
+    </button>`;
+  }
+  el('bulkDayGrid').innerHTML = html;
+  el('bulkDayGrid').querySelectorAll('.day-cell').forEach((node) => {
+    node.addEventListener('click', () => {
+      const d = node.dataset.date;
+      if (bulkSelectedDates.has(d)) bulkSelectedDates.delete(d); else bulkSelectedDates.add(d);
+      renderBulkGrid();
+      updateBulkSelectedCount();
+    });
+  });
+}
+
+function openBulkModal(){
+  el('bTitle').value = '';
+  el('bStartTime').value = '09:00';
+  el('bEndTime').value = '10:00';
+  setBulkCategory('その他');
+  bulkSelectedDates = new Set();
+  const [y, m] = viewDate.split('-').map(Number);
+  bulkMonthCursor = { year: y, month: m - 1 };
+  renderBulkGrid();
+  updateBulkSelectedCount();
+  openModal('bulkModal');
+}
+
+el('btnBulkPrevMonth').addEventListener('click', () => {
+  const d = new Date(bulkMonthCursor.year, bulkMonthCursor.month - 1, 1);
+  bulkMonthCursor = { year: d.getFullYear(), month: d.getMonth() };
+  renderBulkGrid();
+});
+el('btnBulkNextMonth').addEventListener('click', () => {
+  const d = new Date(bulkMonthCursor.year, bulkMonthCursor.month + 1, 1);
+  bulkMonthCursor = { year: d.getFullYear(), month: d.getMonth() };
+  renderBulkGrid();
+});
+el('btnCancelBulk').addEventListener('click', () => closeModal('bulkModal'));
+
+el('btnDoBulk').addEventListener('click', () => {
+  const title = el('bTitle').value.trim();
+  const startTime = el('bStartTime').value;
+  const endTime = el('bEndTime').value;
+  if (!title) { alert('タイトルを入力してください。'); return; }
+  if (!startTime || !endTime) { alert('開始時間と終了時間を入力してください。'); return; }
+  if (endTime <= startTime) { alert('終了時間は開始時間より後にしてください。'); return; }
+  if (bulkSelectedDates.size === 0) { alert('登録する日付を選択してください。'); return; }
+
+  const dates = Array.from(bulkSelectedDates).sort();
+  const newEvents = dates.map((d) => ({
+    id: uuid(),
+    title,
+    category: bulkCategory,
+    startDate: d, startTime,
+    endDate: d, endTime,
+    note: '',
+  }));
+  events = events.concat(newEvents);
+  saveEvents();
+  renderTimeline();
+  closeModal('bulkModal');
+  alert(`${dates.length}件の予定を登録しました。`);
+});
 
 /* ===================== インポート / エクスポート ===================== */
 function exportData(){
@@ -895,6 +1169,10 @@ function bindEvents(){
 
   el('btnOpenMenu').addEventListener('click', () => openModal('menuModal'));
   el('btnCloseMenu').addEventListener('click', () => closeModal('menuModal'));
+  el('btnBulkAdd').addEventListener('click', () => {
+    closeModal('menuModal');
+    openBulkModal();
+  });
   el('btnExport').addEventListener('click', exportData);
   el('btnImportTrigger').addEventListener('click', () => el('fileImportInput').click());
   el('fileImportInput').addEventListener('change', (e) => {
@@ -927,10 +1205,12 @@ function bindEvents(){
 /* ===================== 初期化 ===================== */
 function init(){
   events = loadEvents();
+  favorites = loadFavorites();
   viewDate = todayStr();
   bindEvents();
   renderHeader();
   renderTimeline();
+  renderFavoritesBar();
   scrollToNow();
 
   if ('serviceWorker' in navigator) {
