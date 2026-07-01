@@ -48,6 +48,7 @@ LocalStorageキー: `schedule-pwa-data-v1`。
 ## インポート対応フォーマット
 1. 本アプリのエクスポート形式（`startDate`/`startTime`/`endDate`/`endTime`）
 2. ISO日時形式（`startDate`/`endDate` が `YYYY-MM-DDTHH:MM:SS` のような1つのフィールドにまとまっている形式）。ショートカットアプリのカレンダー書き出しを想定し、`title`/`name`・`notes`/`note` のどちらのキーでも拾う。カテゴリ情報がない場合は「その他」になる。
+3. ショートカットアプリの不具合による壊れた形式。各予定が個別オブジェクトにならず、`title`/`startDate`/`startTime`/`endDate`/`endTime` それぞれのフィールドに全予定分の値が改行区切りでまとめて入っている（`startDate`/`startTime` は同じ値 `"YYYY/MM/DD H:MM"` で、そこから日付と時刻に分解する）。トップレベルが配列の場合、同じ壊れたオブジェクトが重複して入っていることがあるため最初の1件だけを使う。
 
 ## 技術仕様 / 実装メモ
 - 単一HTMLファイル（ビルド不要、依存ライブラリなし）

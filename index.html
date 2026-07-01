@@ -458,7 +458,7 @@ button{
   <div class="modal-card">
     <div class="modal-handle"></div>
     <h2>カレンダーインポート</h2>
-    <p class="hint">ショートカットアプリ等で書き出したJSONを貼り付けてください。本アプリの形式（startDate/startTime/endDate/endTime）か、ISO日時形式（startDate/endDateがYYYY-MM-DDTHH:MM:SS）のどちらにも対応しています。</p>
+    <p class="hint">ショートカットアプリ等で書き出したJSONを貼り付けてください。本アプリの形式（startDate/startTime/endDate/endTime）、ISO日時形式（startDate/endDateがYYYY-MM-DDTHH:MM:SS）、各フィールドが改行区切りでまとまった壊れた形式のいずれにも対応しています。</p>
     <div class="field">
       <textarea id="importTextarea" rows="8" placeholder='[{"title":"打ち合わせ","startDate":"2026-06-28T09:00:00","endDate":"2026-06-28T10:00:00"}]'></textarea>
     </div>
@@ -1097,6 +1097,63 @@ function extractIncoming(data){
   return null;
 }
 
+const SLASH_DATETIME_RE = /^\d{4}\/\d{1,2}\/\d{1,2}\s+\d{1,2}:\d{2}$/;
+
+function parseSlashDateTime(str){
+  const m = String(str).trim().match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})\s+(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  const [, y, mo, d, h, mi] = m;
+  return { date: `${y}-${pad(+mo)}-${pad(+d)}`, time: `${pad(+h)}:${mi}` };
+}
+
+function isBrokenShortcutObject(obj){
+  if (!obj || typeof obj !== 'object') return false;
+  if (typeof obj.title !== 'string' || typeof obj.startDate !== 'string' ||
+      typeof obj.endDate !== 'string' || typeof obj.startTime !== 'string' || typeof obj.endTime !== 'string') return false;
+  const firstLine = obj.startDate.split(/\r?\n/)[0];
+  return SLASH_DATETIME_RE.test(firstLine.trim());
+}
+
+// ショートカットアプリの不具合で title/startDate/endDate/startTime/endTime の
+// 各フィールドに全予定分の値が改行区切りでまとめて入ってしまう壊れた形式に対応。
+// startDate と startTime は同じ値（"YYYY/MM/DD H:MM"）が入っているため、そこから日付と時刻を取り出す。
+function parseBrokenShortcutEvents(data){
+  const candidates = Array.isArray(data) ? data
+    : (data && Array.isArray(data.events) ? data.events : [data]);
+  const obj = candidates.find(isBrokenShortcutObject);
+  if (!obj) return null;
+  const titles = obj.title.split(/\r?\n/);
+  const starts = obj.startDate.split(/\r?\n/);
+  const ends = obj.endDate.split(/\r?\n/);
+  const notes = typeof obj.note === 'string' ? obj.note.split(/\r?\n/)
+    : (typeof obj.notes === 'string' ? obj.notes.split(/\r?\n/) : []);
+  const categories = typeof obj.category === 'string' ? obj.category.split(/\r?\n/) : [];
+  const count = Math.max(titles.length, starts.length, ends.length);
+  const result = [];
+  for (let i = 0; i < count; i++) {
+    const s = parseSlashDateTime(starts[i]);
+    const e = parseSlashDateTime(ends[i]);
+    if (!s || !e) continue;
+    result.push({
+      id: uuid(),
+      title: (titles[i] || '').trim() || '(無題)',
+      category: CATEGORIES.includes(categories[i]) ? categories[i] : 'その他',
+      startDate: s.date, startTime: s.time,
+      endDate: e.date, endTime: e.time,
+      note: (notes[i] || '').trim(),
+    });
+  }
+  return result.length ? result : null;
+}
+
+function parseImportData(data){
+  const broken = parseBrokenShortcutEvents(data);
+  if (broken) return broken;
+  const incoming = extractIncoming(data);
+  if (!incoming) return null;
+  return incoming.map(normalizeEvent).filter(Boolean);
+}
+
 function handleImportFile(file){
   const reader = new FileReader();
   reader.onload = () => {
@@ -1107,9 +1164,8 @@ function handleImportFile(file){
       alert('JSONの読み込みに失敗しました: ' + err.message);
       return;
     }
-    const incoming = extractIncoming(data);
-    if (!incoming) { alert('JSONの形式が正しくありません。'); return; }
-    const normalized = incoming.map(normalizeEvent).filter(Boolean);
+    const normalized = parseImportData(data);
+    if (!normalized) { alert('JSONの形式が正しくありません。'); return; }
     if (normalized.length === 0) { alert('インポートできる予定が見つかりませんでした。'); return; }
     const merge = confirm(`${normalized.length}件の予定が見つかりました。\nOK: 既存データに追加 / キャンセル: 既存データを置き換え`);
     events = merge ? events.concat(normalized) : normalized;
@@ -1131,9 +1187,8 @@ function doCalendarImport(){
     alert('JSONの解析に失敗しました: ' + err.message);
     return;
   }
-  const incoming = extractIncoming(data);
-  if (!incoming) { alert('JSONの形式が正しくありません。'); return; }
-  const normalized = incoming.map(normalizeEvent).filter(Boolean);
+  const normalized = parseImportData(data);
+  if (!normalized) { alert('JSONの形式が正しくありません。'); return; }
   if (normalized.length === 0) { alert('インポートできる予定が見つかりませんでした。'); return; }
   events = events.concat(normalized);
   saveEvents();
