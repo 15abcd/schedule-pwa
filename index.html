@@ -1117,26 +1117,25 @@ function isBrokenShortcutObject(obj){
 // ショートカットアプリの不具合で title/startDate/endDate/startTime/endTime の
 // 各フィールドに全予定分の値が改行区切りでまとめて入ってしまう壊れた形式に対応。
 // startDate と startTime は同じ値（"YYYY/MM/DD H:MM"）が入っているため、そこから日付と時刻を取り出す。
-function parseBrokenShortcutEvents(data){
-  const candidates = Array.isArray(data) ? data
-    : (data && Array.isArray(data.events) ? data.events : [data]);
-  const obj = candidates.find(isBrokenShortcutObject);
-  if (!obj) return null;
-  const titles = obj.title.split(/\r?\n/);
-  const starts = obj.startDate.split(/\r?\n/);
-  const ends = obj.endDate.split(/\r?\n/);
-  const notes = typeof obj.note === 'string' ? obj.note.split(/\r?\n/)
-    : (typeof obj.notes === 'string' ? obj.notes.split(/\r?\n/) : []);
-  const categories = typeof obj.category === 'string' ? obj.category.split(/\r?\n/) : [];
+// 値の中に生の改行が入るため、この壊れた形式はJSON.parseに成功する場合（エスケープされた\n）と
+// 失敗する場合（生の改行）の両方があり得る。共通のイベント組み立て処理をbuildBrokenShortcutEventsに切り出し、
+// JSON.parse成功後のオブジェクトから使うパスと、生テキストから正規表現で直接抜き出すパスの両方で使う。
+function buildBrokenShortcutEvents(titleStr, startDateStr, endDateStr, categoryStr, noteStr){
+  const titles = titleStr.split(/\r?\n/);
+  const starts = startDateStr.split(/\r?\n/);
+  const ends = endDateStr.split(/\r?\n/);
+  const categories = categoryStr ? categoryStr.split(/\r?\n/) : [];
+  const notes = noteStr ? noteStr.split(/\r?\n/) : [];
   const count = Math.max(titles.length, starts.length, ends.length);
   const result = [];
   for (let i = 0; i < count; i++) {
+    const title = (titles[i] || '').trim();
     const s = parseSlashDateTime(starts[i]);
     const e = parseSlashDateTime(ends[i]);
-    if (!s || !e) continue;
+    if (!title || !s || !e) continue;
     result.push({
       id: uuid(),
-      title: (titles[i] || '').trim() || '(無題)',
+      title,
       category: CATEGORIES.includes(categories[i]) ? categories[i] : 'その他',
       startDate: s.date, startTime: s.time,
       endDate: e.date, endTime: e.time,
@@ -1144,6 +1143,41 @@ function parseBrokenShortcutEvents(data){
     });
   }
   return result.length ? result : null;
+}
+
+function parseBrokenShortcutEvents(data){
+  const candidates = Array.isArray(data) ? data
+    : (data && Array.isArray(data.events) ? data.events : [data]);
+  const obj = candidates.find(isBrokenShortcutObject);
+  if (!obj) return null;
+  const noteStr = typeof obj.note === 'string' ? obj.note
+    : (typeof obj.notes === 'string' ? obj.notes : '');
+  const categoryStr = typeof obj.category === 'string' ? obj.category : '';
+  return buildBrokenShortcutEvents(obj.title, obj.startDate, obj.endDate, categoryStr, noteStr);
+}
+
+// title/startDate/startTime/endDate/endTime の値に生の改行が入っているとJSON.parseが必ず失敗するため、
+// パース前の生テキストに対して正規表現で各フィールドのブロックを直接抜き出す。
+// 同じ壊れたオブジェクトが配列内に重複していても、String#matchは最初の一致だけを返すため、自然と1件目のみ使われる。
+const SHORTCUT_RAW_KEYS = ['title', 'startDate', 'startTime', 'endDate', 'endTime', 'category', 'note', 'notes'];
+
+function extractRawShortcutField(text, key){
+  const otherKeys = SHORTCUT_RAW_KEYS.filter((k) => k !== key).join('|');
+  const re = new RegExp('"' + key + '"\\s*:\\s*"([\\s\\S]*?)"\\s*(?=,\\s*"(?:' + otherKeys + ')"\\s*:|\\s*[}\\],])');
+  const m = text.match(re);
+  return m ? m[1] : null;
+}
+
+function parseBrokenShortcutRawText(text){
+  const titleStr = extractRawShortcutField(text, 'title');
+  const startDateStr = extractRawShortcutField(text, 'startDate');
+  const endDateStr = extractRawShortcutField(text, 'endDate');
+  if (titleStr === null || startDateStr === null || endDateStr === null) return null;
+  const firstLine = startDateStr.split(/\r?\n/)[0].trim();
+  if (!SLASH_DATETIME_RE.test(firstLine)) return null;
+  const categoryStr = extractRawShortcutField(text, 'category');
+  const noteStr = extractRawShortcutField(text, 'note') || extractRawShortcutField(text, 'notes');
+  return buildBrokenShortcutEvents(titleStr, startDateStr, endDateStr, categoryStr, noteStr);
 }
 
 function parseImportData(data){
@@ -1154,17 +1188,29 @@ function parseImportData(data){
   return incoming.map(normalizeEvent).filter(Boolean);
 }
 
+// 壊れた形式（生の改行入りでJSON.parse不可）をまず試し、ダメなら通常のJSON.parseにフォールバックする。
+function parseImportText(text){
+  const broken = parseBrokenShortcutRawText(text);
+  if (broken) return broken;
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch (err) {
+    throw new Error('JSONの解析に失敗しました: ' + err.message);
+  }
+  return parseImportData(data);
+}
+
 function handleImportFile(file){
   const reader = new FileReader();
   reader.onload = () => {
-    let data;
+    let normalized;
     try {
-      data = JSON.parse(reader.result);
+      normalized = parseImportText(reader.result);
     } catch (err) {
-      alert('JSONの読み込みに失敗しました: ' + err.message);
+      alert(err.message);
       return;
     }
-    const normalized = parseImportData(data);
     if (!normalized) { alert('JSONの形式が正しくありません。'); return; }
     if (normalized.length === 0) { alert('インポートできる予定が見つかりませんでした。'); return; }
     const merge = confirm(`${normalized.length}件の予定が見つかりました。\nOK: 既存データに追加 / キャンセル: 既存データを置き換え`);
@@ -1180,14 +1226,13 @@ function handleImportFile(file){
 function doCalendarImport(){
   const text = el('importTextarea').value.trim();
   if (!text) { alert('JSONを貼り付けてください。'); return; }
-  let data;
+  let normalized;
   try {
-    data = JSON.parse(text);
+    normalized = parseImportText(text);
   } catch (err) {
-    alert('JSONの解析に失敗しました: ' + err.message);
+    alert(err.message);
     return;
   }
-  const normalized = parseImportData(data);
   if (!normalized) { alert('JSONの形式が正しくありません。'); return; }
   if (normalized.length === 0) { alert('インポートできる予定が見つかりませんでした。'); return; }
   events = events.concat(normalized);
