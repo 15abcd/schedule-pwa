@@ -458,7 +458,7 @@ button{
   <div class="modal-card">
     <div class="modal-handle"></div>
     <h2>カレンダーインポート</h2>
-    <p class="hint">ショートカットアプリ等で書き出したJSONを貼り付けてください。本アプリの形式（startDate/startTime/endDate/endTime）、ISO日時形式（startDate/endDateがYYYY-MM-DDTHH:MM:SS）、各フィールドが改行区切りでまとまった壊れた形式のいずれにも対応しています。</p>
+    <p class="hint">ショートカットアプリ等で書き出したJSONを貼り付けてください。本アプリの形式（startDate/startTime/endDate/endTime）、ISO日時形式（startDate/endDateがYYYY-MM-DDTHH:MM:SS）、シンプル形式（start/endがYYYY/MM/DD H:MM）、各フィールドが改行区切りでまとまった壊れた形式のいずれにも対応しています。</p>
     <div class="field">
       <textarea id="importTextarea" rows="8" placeholder='[{"title":"打ち合わせ","startDate":"2026-06-28T09:00:00","endDate":"2026-06-28T10:00:00"}]'></textarea>
     </div>
@@ -1075,8 +1075,8 @@ function normalizeEvent(raw){
   const startRaw = raw.startDate || raw.start;
   const endRaw = raw.endDate || raw.end;
   if (startRaw && endRaw) {
-    const s = splitIsoDateTime(startRaw);
-    const e = splitIsoDateTime(endRaw);
+    const s = parseSlashDateTime(startRaw) || splitIsoDateTime(startRaw);
+    const e = parseSlashDateTime(endRaw) || splitIsoDateTime(endRaw);
     if (s && e) {
       return {
         id: uuid(),
