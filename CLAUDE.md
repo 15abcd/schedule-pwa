@@ -50,6 +50,7 @@ LocalStorageキー: `schedule-pwa-data-v1`。
 2. ISO日時形式（`startDate`/`endDate` が `YYYY-MM-DDTHH:MM:SS` のような1つのフィールドにまとまっている形式）。ショートカットアプリのカレンダー書き出しを想定し、`title`/`name`・`notes`/`note` のどちらのキーでも拾う。カテゴリ情報がない場合は「その他」になる。
 3. シンプル形式（現行のショートカット出力）。各予定が独立したオブジェクトで、`title`/`start`/`end` を持ち、`start`/`end` は `"YYYY/MM/DD H:MM"` 形式（スラッシュ区切り、日時1フィールド）。カテゴリは常に「その他」、メモは空文字になる。
 4. ショートカットアプリの旧不具合による壊れた形式。各予定が個別オブジェクトにならず、`title`/`startDate`/`startTime`/`endDate`/`endTime` それぞれのフィールドに全予定分の値が改行区切りでまとめて入っている（`startDate`/`startTime` は同じ値 `"YYYY/MM/DD H:MM"` で、そこから日付と時刻に分解する）。トップレベルが配列の場合、同じ壊れたオブジェクトが重複して入っていることがあるため最初の1件だけを使う。
+5. ICS（iCalendar）形式。`BEGIN:VCALENDAR`/`BEGIN:VEVENT` を含むテキストと判定し、JSON.parseは呼ばずに独自のテキストパースで処理する。行折り返し（継続行の先頭が空白/タブ）を結合したうえで `VEVENT` ブロックごとに `SUMMARY`/`DTSTART`/`DTEND` を抽出する。日時は `YYYYMMDDTHHMMSS`（ローカル時刻）または末尾に `Z` が付くUTC形式に対応し、UTCの場合は端末のタイムゾーンに変換してから `startDate`/`startTime`・`endDate`/`endTime` に分解する。`category` は常に「その他」、`note` は空文字になる。
 
 ## 技術仕様 / 実装メモ
 - 単一HTMLファイル（ビルド不要、依存ライブラリなし）

@@ -458,7 +458,7 @@ button{
   <div class="modal-card">
     <div class="modal-handle"></div>
     <h2>カレンダーインポート</h2>
-    <p class="hint">ショートカットアプリ等で書き出したJSONを貼り付けてください。本アプリの形式（startDate/startTime/endDate/endTime）、ISO日時形式（startDate/endDateがYYYY-MM-DDTHH:MM:SS）、シンプル形式（start/endがYYYY/MM/DD H:MM）、各フィールドが改行区切りでまとまった壊れた形式のいずれにも対応しています。</p>
+    <p class="hint">ショートカットアプリ等で書き出したJSONやICS（iCalendar）形式を貼り付けてください。本アプリの形式（startDate/startTime/endDate/endTime）、ISO日時形式（startDate/endDateがYYYY-MM-DDTHH:MM:SS）、シンプル形式（start/endがYYYY/MM/DD H:MM）、各フィールドが改行区切りでまとまった壊れた形式、ICS形式（BEGIN:VEVENT〜）のいずれにも対応しています。</p>
     <div class="field">
       <textarea id="importTextarea" rows="8" placeholder='[{"title":"打ち合わせ","startDate":"2026-06-28T09:00:00","endDate":"2026-06-28T10:00:00"}]'></textarea>
     </div>
@@ -514,7 +514,7 @@ button{
   </div>
 </div>
 
-<input type="file" id="fileImportInput" accept="application/json,.json" class="hidden">
+<input type="file" id="fileImportInput" accept="application/json,.json,text/calendar,.ics" class="hidden">
 
 <script>
 'use strict';
@@ -1196,10 +1196,87 @@ function parseImportData(data){
   return incoming.map(normalizeEvent).filter(Boolean);
 }
 
+// ICS(iCalendar)形式かどうかをJSON.parseを試みる前に判定する。
+function looksLikeIcsText(text){
+  return /BEGIN:VCALENDAR/i.test(text) || /BEGIN:VEVENT/i.test(text);
+}
+
+// ICS仕様の行折り返し（継続行は先頭が半角スペース/タブ）を1行に結合する。
+function unfoldIcsLines(text){
+  return text.replace(/\r\n/g, '\n').replace(/\n[ \t]/g, '');
+}
+
+function unescapeIcsText(str){
+  return str.replace(/\\n/gi, '\n').replace(/\\,/g, ',').replace(/\\;/g, ';').replace(/\\\\/g, '\\');
+}
+
+// "20260702T050000"（ローカル時刻）または末尾Z付き"20260702T050000Z"（UTC）を
+// startDate/startTime形式に変換する。UTCの場合は端末のタイムゾーンに変換してから日付・時刻を出す。
+function parseIcsDateTime(str){
+  const m = String(str).trim().match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})(Z)?$/);
+  if (!m) return null;
+  const [, y, mo, d, h, mi, se, z] = m;
+  if (z) {
+    const utcDate = new Date(Date.UTC(+y, +mo - 1, +d, +h, +mi, +se));
+    return {
+      date: `${utcDate.getFullYear()}-${pad(utcDate.getMonth() + 1)}-${pad(utcDate.getDate())}`,
+      time: `${pad(utcDate.getHours())}:${pad(utcDate.getMinutes())}`,
+    };
+  }
+  return { date: `${y}-${mo}-${d}`, time: `${h}:${mi}` };
+}
+
+// VEVENTブロックごとにSUMMARY/DTSTART/DTENDを抜き出す。
+// キー名はパラメータ付き（例: DTSTART;TZID=Asia/Tokyo:...）の場合があるため、":"より前を";"で区切って先頭部分だけ見る。
+function parseIcsEvents(text){
+  const lines = unfoldIcsLines(text).split('\n');
+  const rawEvents = [];
+  let current = null;
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    if (/^BEGIN:VEVENT$/i.test(line)) { current = {}; continue; }
+    if (/^END:VEVENT$/i.test(line)) {
+      if (current) rawEvents.push(current);
+      current = null;
+      continue;
+    }
+    if (!current) continue;
+    const idx = line.indexOf(':');
+    if (idx < 0) continue;
+    const key = line.slice(0, idx).split(';')[0].toUpperCase();
+    const value = line.slice(idx + 1);
+    if (key === 'SUMMARY') current.summary = unescapeIcsText(value);
+    else if (key === 'DTSTART') current.dtstart = value.trim();
+    else if (key === 'DTEND') current.dtend = value.trim();
+  }
+  const result = [];
+  for (const ev of rawEvents) {
+    if (!ev.dtstart || !ev.dtend) continue;
+    const s = parseIcsDateTime(ev.dtstart);
+    const e = parseIcsDateTime(ev.dtend);
+    if (!s || !e) continue;
+    result.push({
+      id: uuid(),
+      title: ev.summary || '(無題)',
+      category: 'その他',
+      startDate: s.date, startTime: s.time,
+      endDate: e.date, endTime: e.time,
+      note: '',
+    });
+  }
+  return result.length ? result : null;
+}
+
 // 壊れた形式のシグネチャを検出した場合、JSON.parseは一切呼ばず正規表現パースのみで完結させる
 // （値に生の改行が入っているためJSON.parseを呼ぶと必ず例外になる）。
 // シグネチャが無い場合のみ、従来通りJSON.parseしてから通常のインポート処理に渡す。
 function parseImportText(text){
+  if (looksLikeIcsText(text)) {
+    const icsEvents = parseIcsEvents(text);
+    if (icsEvents) return icsEvents;
+    throw new Error('ICS形式を検出しましたが、予定の抽出に失敗しました。');
+  }
   if (looksLikeBrokenShortcutText(text)) {
     const broken = parseBrokenShortcutRawText(text);
     if (broken) return broken;
