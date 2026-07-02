@@ -209,6 +209,38 @@ button{
 .event-time{color:var(--text-secondary);font-size:11px;white-space:nowrap;}
 .event-cont{font-size:10px;color:var(--text-secondary);}
 
+/* ---------- week view ---------- */
+.mode-toggle{display:flex;flex:none;border:1px solid var(--border);border-radius:8px;overflow:hidden;}
+.mode-toggle button{background:none;border:none;color:var(--text-secondary);font-size:12px;padding:7px 9px;line-height:1;}
+.mode-toggle button.active{background:var(--bg-hover);color:var(--text);font-weight:600;}
+.week-day-header{
+  position:sticky;
+  top:0;
+  z-index:20;
+  display:flex;
+  margin:0 10px;
+  padding-left:50px;
+  background:var(--bg);
+  border-bottom:1px solid var(--border);
+}
+.week-day-cell{
+  flex:1;
+  min-width:0;
+  background:none;
+  border:none;
+  text-align:center;
+  padding:5px 0 6px;
+  font-size:10px;
+  color:var(--text-secondary);
+  border-radius:6px;
+}
+.week-day-cell:active{background:var(--bg-hover);}
+.week-day-cell .num{display:block;font-size:14px;font-weight:600;color:var(--text);margin-top:1px;}
+.week-day-cell.today .num{color:var(--accent);}
+.week-col-line{position:absolute;top:0;bottom:0;width:1px;background:var(--border);opacity:.55;pointer-events:none;}
+.event-block.week{padding:2px 3px;font-size:10px;border-left-width:3px;border-radius:5px;}
+.event-block.week .event-title{font-size:10px;}
+
 /* ---------- fab ---------- */
 .fab{
   position:fixed;
@@ -346,6 +378,10 @@ button{
   <button id="btnDateLabel" class="date-label">読み込み中...</button>
   <button id="btnNextDay" class="icon-btn" aria-label="次の日">›</button>
   <button id="btnToday" class="icon-btn small">今日</button>
+  <div class="mode-toggle" role="group" aria-label="表示切り替え">
+    <button type="button" id="btnModeDay" class="active">日</button>
+    <button type="button" id="btnModeWeek">週</button>
+  </div>
   <button id="btnOpenMonth" class="icon-btn" aria-label="月カレンダー">📅</button>
   <button id="btnOpenMenu" class="icon-btn" aria-label="メニュー">⋮</button>
 </header>
@@ -360,6 +396,7 @@ button{
 <div class="favorites-bar hidden" id="favoritesBar"></div>
 
 <main class="timeline-scroll" id="timelineScroll">
+  <div class="week-day-header hidden" id="weekDayHeader"></div>
   <div class="timeline-inner" id="timelineInner">
     <div class="events-layer" id="eventsLayer"></div>
   </div>
@@ -522,6 +559,7 @@ button{
 /* ===================== 定数 ===================== */
 const STORAGE_KEY = 'schedule-pwa-data-v1';
 const FAVORITES_STORAGE_KEY = 'schedule-pwa-favorites-v1';
+const VIEWMODE_STORAGE_KEY = 'schedule-pwa-viewmode-v1';
 const CATEGORIES = ['睡眠','移動','食事','その他'];
 const WEEKDAYS_JP = ['日','月','火','水','木','金','土'];
 const HOUR_HEIGHT = 60; // px per hour = 1px per minute
@@ -530,6 +568,7 @@ const HOUR_HEIGHT = 60; // px per hour = 1px per minute
 let events = [];
 let favorites = [];
 let viewDate = '';
+let viewMode = 'day'; // 'day' | 'week'
 let monthCursor = { year: 0, month: 0 };
 let editingEventId = null;
 let selectedCategory = 'その他';
@@ -577,6 +616,12 @@ function currentMinutes(){
   const d = new Date();
   return d.getHours() * 60 + d.getMinutes();
 }
+// viewDateを含む週の日曜〜土曜の7日分（月カレンダーと同じ日曜始まり）
+function weekDates(dateStr){
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const start = addDaysStr(dateStr, -new Date(y, m - 1, d).getDay());
+  return Array.from({ length: 7 }, (_, i) => addDaysStr(start, i));
+}
 
 /* ===================== 永続化 ===================== */
 function loadEvents(){
@@ -617,6 +662,19 @@ function saveFavorites(){
   }
 }
 
+function loadViewMode(){
+  try {
+    return localStorage.getItem(VIEWMODE_STORAGE_KEY) === 'week' ? 'week' : 'day';
+  } catch (e) {
+    return 'day';
+  }
+}
+function saveViewMode(){
+  try {
+    localStorage.setItem(VIEWMODE_STORAGE_KEY, viewMode);
+  } catch (e) { /* 表示モードは失われても致命的でないため通知しない */ }
+}
+
 /* ===================== モーダル共通 ===================== */
 function openModal(id){ el(id).classList.add('open'); }
 function closeModal(id){ el(id).classList.remove('open'); }
@@ -626,7 +684,27 @@ function closeModal(id){ el(id).classList.remove('open'); }
 
 /* ===================== ヘッダー ===================== */
 function renderHeader(){
-  el('btnDateLabel').textContent = formatDisplayDate(viewDate);
+  if (viewMode === 'week') {
+    const dates = weekDates(viewDate);
+    const [sy, sm, sd] = dates[0].split('-').map(Number);
+    const [ey, em, ed] = dates[6].split('-').map(Number);
+    el('btnDateLabel').textContent = sy === ey
+      ? `${sy}年 ${sm}/${sd}〜${em}/${ed}`
+      : `${sy}/${sm}/${sd}〜${ey}/${em}/${ed}`;
+  } else {
+    el('btnDateLabel').textContent = formatDisplayDate(viewDate);
+  }
+  el('btnModeDay').classList.toggle('active', viewMode === 'day');
+  el('btnModeWeek').classList.toggle('active', viewMode === 'week');
+}
+
+function setViewMode(mode){
+  if (viewMode === mode) return;
+  viewMode = mode;
+  saveViewMode();
+  renderHeader();
+  renderTimeline();
+  scrollToNow();
 }
 
 /* ===================== タイムライン ===================== */
@@ -686,6 +764,21 @@ function assignColumns(segments){
 }
 
 function renderTimeline(){
+  if (viewMode === 'week') renderWeekTimeline(); else renderDayTimeline();
+}
+
+function bindEventBlockTaps(layer){
+  layer.querySelectorAll('.event-block').forEach((node) => {
+    node.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const ev = events.find((x) => x.id === node.dataset.id);
+      if (ev) openEventModal(ev, ev.id);
+    });
+  });
+}
+
+function renderDayTimeline(){
+  el('weekDayHeader').classList.add('hidden');
   timelineInner().style.height = (24 * HOUR_HEIGHT) + 'px';
   timelineInner().innerHTML = buildHourRows() +
     '<div class="events-layer" id="eventsLayer"></div>' +
@@ -710,19 +803,62 @@ function renderTimeline(){
     </div>`;
   }
   layer.innerHTML = html;
-
-  layer.querySelectorAll('.event-block').forEach((node) => {
-    node.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const ev = events.find((x) => x.id === node.dataset.id);
-      if (ev) openEventModal(ev, ev.id);
-    });
-  });
+  bindEventBlockTaps(layer);
 
   if (viewDate === todayStr()) {
     const nowLine = el('nowLine');
     if (nowLine) nowLine.style.top = currentMinutes() + 'px';
   }
+}
+
+function renderWeekTimeline(){
+  const dates = weekDates(viewDate);
+  const today = todayStr();
+
+  // 曜日ヘッダー（タップでその日の日表示へ）
+  const header = el('weekDayHeader');
+  header.classList.remove('hidden');
+  header.innerHTML = dates.map((ds, i) => {
+    const d = +ds.split('-')[2];
+    const cls = ['week-day-cell'];
+    if (ds === today) cls.push('today');
+    return `<button type="button" class="${cls.join(' ')}" data-date="${ds}">${WEEKDAYS_JP[i]}<span class="num">${d}</span></button>`;
+  }).join('');
+  header.querySelectorAll('.week-day-cell').forEach((node) => {
+    node.addEventListener('click', () => {
+      viewDate = node.dataset.date;
+      setViewMode('day');
+    });
+  });
+
+  timelineInner().style.height = (24 * HOUR_HEIGHT) + 'px';
+  timelineInner().innerHTML = buildHourRows() +
+    '<div class="events-layer" id="eventsLayer"></div>';
+
+  const layer = eventsLayer();
+  const dayWidth = 100 / 7;
+  let html = '';
+  for (let i = 1; i < 7; i++) {
+    html += `<div class="week-col-line" style="left:${dayWidth * i}%"></div>`;
+  }
+  // 現在時刻線は今日の列の幅だけに表示（events-layer内に置くため列基準の%が使える）
+  if (dates.includes(today)) {
+    const idx = dates.indexOf(today);
+    html += `<div class="now-line" id="nowLine" style="left:${dayWidth * idx}%;width:${dayWidth}%;top:${currentMinutes()}px"></div>`;
+  }
+  dates.forEach((ds, dayIdx) => {
+    const segments = assignColumns(getDaySegments(ds));
+    for (const seg of segments) {
+      const widthPct = dayWidth / seg.totalCols;
+      const leftPct = dayIdx * dayWidth + seg.col * widthPct;
+      html += `<div class="event-block week" data-id="${seg.ev.id}" data-category="${escapeAttr(seg.ev.category)}"
+        style="top:${seg.startMin}px;height:${seg.endMin - seg.startMin}px;left:calc(${leftPct}% + 1px);width:calc(${widthPct}% - 2px)">
+        <div class="event-title">${escapeHtml(seg.ev.title)}</div>
+      </div>`;
+    }
+  });
+  layer.innerHTML = html;
+  bindEventBlockTaps(layer);
 }
 
 function escapeHtml(str){
@@ -736,17 +872,28 @@ function handleTimelineClick(e){
   let minutes = Math.round(e.clientY - rect.top);
   minutes = Math.max(0, Math.min(23 * 60 + 45, minutes));
   minutes = Math.round(minutes / 15) * 15;
+  let targetDate = viewDate;
+  if (viewMode === 'week') {
+    // タップ位置のX座標からどの曜日の列かを割り出す
+    const layerRect = eventsLayer().getBoundingClientRect();
+    const x = e.clientX - layerRect.left;
+    if (x < 0) return; // 時刻ラベルの余白部分は無視
+    const idx = Math.max(0, Math.min(6, Math.floor(x / (layerRect.width / 7))));
+    targetDate = weekDates(viewDate)[idx];
+  }
   const startTime = minutesToTime(minutes);
   const endTime = minutesToTime(Math.min(minutes + 30, 23 * 60 + 59));
   openEventModal({
-    startDate: viewDate, startTime,
-    endDate: viewDate, endTime,
+    startDate: targetDate, startTime,
+    endDate: targetDate, endTime,
     title: '', category: 'その他', note: '',
   }, null);
 }
 
 function scrollToNow(){
-  if (viewDate !== todayStr()) return;
+  const today = todayStr();
+  const todayVisible = viewMode === 'week' ? weekDates(viewDate).includes(today) : viewDate === today;
+  if (!todayVisible) return;
   timelineScroll().scrollTop = Math.max(0, currentMinutes() - 120);
 }
 
@@ -1375,17 +1522,19 @@ function doCalendarImport(){
 /* ===================== イベント結線 ===================== */
 function bindEvents(){
   el('btnPrevDay').addEventListener('click', () => {
-    viewDate = addDaysStr(viewDate, -1);
+    viewDate = addDaysStr(viewDate, viewMode === 'week' ? -7 : -1);
     renderHeader(); renderTimeline();
   });
   el('btnNextDay').addEventListener('click', () => {
-    viewDate = addDaysStr(viewDate, 1);
+    viewDate = addDaysStr(viewDate, viewMode === 'week' ? 7 : 1);
     renderHeader(); renderTimeline();
   });
   el('btnToday').addEventListener('click', () => {
     viewDate = todayStr();
     renderHeader(); renderTimeline(); scrollToNow();
   });
+  el('btnModeDay').addEventListener('click', () => setViewMode('day'));
+  el('btnModeWeek').addEventListener('click', () => setViewMode('week'));
   el('btnDateLabel').addEventListener('click', openMonthModal);
   el('btnOpenMonth').addEventListener('click', openMonthModal);
   el('btnAdd').addEventListener('click', () => {
@@ -1424,10 +1573,9 @@ function bindEvents(){
   });
 
   setInterval(() => {
-    if (viewDate === todayStr()) {
-      const nowLine = el('nowLine');
-      if (nowLine) nowLine.style.top = currentMinutes() + 'px';
-    }
+    // nowLineは今日が表示範囲内のときだけレンダリングされるため、存在チェックだけでよい
+    const nowLine = el('nowLine');
+    if (nowLine) nowLine.style.top = currentMinutes() + 'px';
   }, 60000);
 }
 
@@ -1435,6 +1583,7 @@ function bindEvents(){
 function init(){
   events = loadEvents();
   favorites = loadFavorites();
+  viewMode = loadViewMode();
   viewDate = todayStr();
   bindEvents();
   renderHeader();
