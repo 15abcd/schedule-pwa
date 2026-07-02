@@ -591,7 +591,11 @@ function loadEvents(){
   }
 }
 function saveEvents(){
-  localStorage.setItem(STORAGE_KEY, JSON.stringify({ events }));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ events }));
+  } catch (e) {
+    alert('データの保存に失敗しました。この変更はリロード後に消える可能性があります。\nストレージの空き容量を確認するか、エクスポートでバックアップを取ってください。\n\n' + e.message);
+  }
 }
 
 function loadFavorites(){
@@ -606,7 +610,11 @@ function loadFavorites(){
   }
 }
 function saveFavorites(){
-  localStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify({ favorites }));
+  try {
+    localStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify({ favorites }));
+  } catch (e) {
+    alert('よく使う予定の保存に失敗しました。ストレージの空き容量を確認してください。\n\n' + e.message);
+  }
 }
 
 /* ===================== モーダル共通 ===================== */
@@ -1060,17 +1068,42 @@ function splitIsoDateTime(iso){
   };
 }
 
+// インポートされた日付・時刻の書式を検証しつつ正規化する。
+// ゼロ埋めなし（"2026-6-8" / "9:00"）は補正し、書式が違う・範囲外（13月/25時など）の値はnullを返す。
+// 無検証のまま保存すると new Date("...T9:00:00") がSafariでInvalid Dateになり、
+// 予定が保存されているのにタイムラインに表示されない状態になるため必ずここを通す。
+function normalizeDateStr(str){
+  const m = String(str).trim().match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (!m) return null;
+  const mo = +m[2], d = +m[3];
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  return `${m[1]}-${pad(mo)}-${pad(d)}`;
+}
+function normalizeTimeStr(str){
+  const m = String(str).trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  const h = +m[1], mi = +m[2];
+  if (h > 23 || mi > 59) return null;
+  return `${pad(h)}:${m[2]}`;
+}
+
 function normalizeEvent(raw){
   if (!raw || typeof raw !== 'object') return null;
   if (raw.startDate && raw.startTime && raw.endDate && raw.endTime) {
-    return {
-      id: uuid(),
-      title: raw.title || '(無題)',
-      category: CATEGORIES.includes(raw.category) ? raw.category : 'その他',
-      startDate: raw.startDate, startTime: raw.startTime,
-      endDate: raw.endDate, endTime: raw.endTime,
-      note: raw.note || '',
-    };
+    const sd = normalizeDateStr(raw.startDate), st = normalizeTimeStr(raw.startTime);
+    const ed = normalizeDateStr(raw.endDate), et = normalizeTimeStr(raw.endTime);
+    if (sd && st && ed && et) {
+      return {
+        id: uuid(),
+        title: raw.title || '(無題)',
+        category: CATEGORIES.includes(raw.category) ? raw.category : 'その他',
+        startDate: sd, startTime: st,
+        endDate: ed, endTime: et,
+        note: raw.note || '',
+      };
+    }
+    // 本アプリ形式として解釈できない場合はここで捨てず、
+    // 下のISO日時/シンプル形式のパースにフォールバックする。
   }
   const startRaw = raw.startDate || raw.start;
   const endRaw = raw.endDate || raw.end;
@@ -1303,8 +1336,14 @@ function handleImportFile(file){
     }
     if (!normalized) { alert('JSONの形式が正しくありません。'); return; }
     if (normalized.length === 0) { alert('インポートできる予定が見つかりませんでした。'); return; }
-    const merge = confirm(`${normalized.length}件の予定が見つかりました。\nOK: 既存データに追加 / キャンセル: 既存データを置き換え`);
-    events = merge ? events.concat(normalized) : normalized;
+    const merge = confirm(`${normalized.length}件の予定が見つかりました。\n既存データに追加しますか？\n（キャンセルすると「置き換え」か「中止」を選べます）`);
+    if (merge) {
+      events = events.concat(normalized);
+    } else {
+      const replace = confirm(`既存の予定をすべて削除して、インポートした${normalized.length}件に置き換えますか？\nOK: 置き換える / キャンセル: インポートを中止`);
+      if (!replace) return;
+      events = normalized;
+    }
     saveEvents();
     renderTimeline();
     closeModal('menuModal');
@@ -1407,6 +1446,12 @@ function init(){
     window.addEventListener('load', () => {
       navigator.serviceWorker.register('./sw.js').catch((err) => console.warn('SW登録失敗', err));
     });
+  }
+
+  // ストレージの永続化を要求（容量逼迫時にLocalStorageが自動削除されるのを防ぐ）。
+  // 拒否されても動作は変わらないため結果は確認のみ。
+  if (navigator.storage && navigator.storage.persist) {
+    navigator.storage.persist().catch(() => {});
   }
 }
 
